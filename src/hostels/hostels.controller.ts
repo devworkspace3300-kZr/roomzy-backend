@@ -30,12 +30,15 @@ export class HostelsController {
   @ApiOperation({ summary: 'Search and filter verified hostels (Public)' })
   findAll(
     @Query('city') city?: string,
+    @Query('area') area?: string,
     @Query('genderType') genderType?: GenderType,
     @Query('minPrice') minPrice?: number,
     @Query('maxPrice') maxPrice?: number,
     @Query('institute') institute?: string,
+    @Query('roomType') roomType?: string,
+    @Query('amenities') amenities?: string,
   ) {
-    return this.hostelsService.findAll({ city, genderType, minPrice, maxPrice, institute });
+    return this.hostelsService.findAll({ city, area, genderType, minPrice, maxPrice, institute, roomType, amenities });
   }
 
   @Post()

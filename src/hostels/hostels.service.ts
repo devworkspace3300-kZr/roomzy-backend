@@ -70,7 +70,16 @@ export class HostelsService {
     if (dto.startingPrice === undefined) throw new BadRequestException('Starting price missing');
   }
 
-  async findAll(query: { city?: string, genderType?: GenderType, minPrice?: number, maxPrice?: number, institute?: string }): Promise<Hostel[]> {
+  async findAll(query: { 
+    city?: string, 
+    area?: string,
+    genderType?: GenderType, 
+    minPrice?: number, 
+    maxPrice?: number, 
+    institute?: string,
+    roomType?: string,
+    amenities?: string
+  }): Promise<Hostel[]> {
     const qb = this.hostelRepository.createQueryBuilder('hostel')
       .leftJoinAndSelect('hostel.owner', 'owner')
       .leftJoinAndSelect('hostel.images', 'images')
@@ -82,6 +91,10 @@ export class HostelsService {
       qb.andWhere('hostel.city ILIKE :city', { city: `%${query.city}%` });
     }
 
+    if (query.area) {
+      qb.andWhere('hostel.area ILIKE :area', { area: `%${query.area}%` });
+    }
+
     if (query.institute) {
       qb.andWhere('(hostel.nearestInstituteId = :instId OR hostel.nearestInstituteId ILIKE :instPattern)', { 
         instId: query.institute,
@@ -91,6 +104,35 @@ export class HostelsService {
 
     if (query.genderType) {
       qb.andWhere('hostel.genderType = :genderType', { genderType: query.genderType });
+    }
+
+    if (query.roomType) {
+      // Check if any room in the hostel matches the type
+      qb.andWhere(qb => {
+        const subQuery = qb.subQuery()
+          .select('room.id')
+          .from('rooms', 'room')
+          .where('room.hostelId = hostel.id')
+          .andWhere('room.roomType ILIKE :roomType', { roomType: `%${query.roomType}%` })
+          .getQuery();
+        return 'EXISTS ' + subQuery;
+      });
+    }
+
+    if (query.amenities) {
+      const amenityList = query.amenities.split(',');
+      amenityList.forEach((amenity, index) => {
+        qb.andWhere(qb => {
+          const subQuery = qb.subQuery()
+            .select('ha.hostelId')
+            .from('hostel_amenities', 'ha')
+            .innerJoin('amenities', 'a', 'a.id = ha.amenityId')
+            .where('ha.hostelId = hostel.id')
+            .andWhere('a.slug = :amenity' + index, { ['amenity' + index]: amenity })
+            .getQuery();
+          return 'EXISTS ' + subQuery;
+        });
+      });
     }
 
     if (query.minPrice) {
