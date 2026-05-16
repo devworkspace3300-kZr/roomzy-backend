@@ -11,8 +11,15 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
  
+  // ── Global Request Logger — to see if traffic hits the app ──────
+  app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] 🛰  ${req.method} ${req.url} - Origin: ${req.get('origin') || 'direct'}`);
+    next();
+  });
+
   // ── Global prefix ──────────
   app.setGlobalPrefix('api/v1');
+
  
   // ── CORS — extremely permissive for debugging connectivity ─────────
   app.enableCors({
