@@ -21,20 +21,23 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 export const databaseConfig = (): TypeOrmModuleOptions => {
-  const dbUrl = process.env.DATABASE_URL;
+  const dbUrl = process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL;
 
   // If a DATABASE_URL is provided (e.g. Railway or Supabase)
   if (dbUrl) {
-    console.log('🔌 Database: Using DATABASE_URL connection mode');
+    // Mask sensitive info for logging
+    const maskedUrl = dbUrl.replace(/:([^:@]+)@/, ':****@');
+    console.log(`🔌 Database: Using connection string mode (${maskedUrl.split('@')[1] || 'remote'})`);
+    
     return {
       type: 'postgres',
       url: dbUrl,
       ssl: {
-        rejectUnauthorized: false,
+        rejectUnauthorized: false, // Required for most cloud DBs
       },
       autoLoadEntities: true,
       synchronize: false,
-      logging: ['error', 'warn'], // Cleaner logging for production
+      logging: ['error', 'warn'],
     };
   }
 

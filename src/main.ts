@@ -11,84 +11,43 @@ import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
  
-  // ── Global prefix — all routes become /api/v1/... ──────────
+  // ── Global prefix ──────────
   app.setGlobalPrefix('api/v1');
  
-  // ── CORS — allow your frontend to call this backend ─────────
-  const allowedOrigins = [
-    process.env.FRONTEND_URL,
-    'https://roomzy.pk',
-    'https://www.roomzy.pk',
-    'https://roomzy-frontend.vercel.app', 
-    'https://roomzy.filenod.com',
-    'http://localhost:5173',
-    'http://localhost:3001',
-  ].filter(Boolean);
-
+  // ── CORS — extremely permissive for debugging connectivity ─────────
   app.enableCors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
-        callback(null, true);
-      } else {
-        console.warn(`🔒 CORS: Request from origin ${origin} blocked`);
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
-    methods:        ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-    credentials:    true,
+    origin: true, // Allows all origins
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
   });
   
-  // ── Global validation — auto-validates all DTO classes ───────
+  // ── Global validation ───────
   app.useGlobalPipes(new ValidationPipe({
-    whitelist:        true,  // Strip unknown fields from request body
-    forbidNonWhitelisted: false,
-    transform:        true,  // Auto-convert strings to numbers etc.
+    whitelist: true,
+    transform: true,
   }));
  
-  // ── Global response wrapper ───────────────────────────────────
   app.useGlobalInterceptors(new ResponseInterceptor());
- 
-  // ── Global error handler ──────────────────────────────────────
   app.useGlobalFilters(new GlobalExceptionFilter());
  
-  // ── Swagger API documentation ─────────────────────────────────
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Roomzy API')
-    .setDescription('Pakistan Student Accommodation Platform — API Reference')
     .setVersion('1.0')
-    .addBearerAuth()  // Adds the 'Authorize' button — paste token here to test
+    .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3000;
-  // Railway and Docker require listening on 0.0.0.0
+  
+  // Railway require listening on 0.0.0.0
   await app.listen(port, '0.0.0.0');
 
-  console.log(`🚀 Roomzy API running at:  http://0.0.0.0:${port}/api/v1`);
-  console.log(`📖 Swagger docs available: http://0.0.0.0:${port}/api/docs`);
-  
-  // -- Database Connection Info Log --
-  const dbUrl = process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL;
-  const dbName = process.env.DB_NAME || process.env.PGDATABASE || 'roomzy_db';
-  const dbHost = process.env.DB_HOST || process.env.PGHOST || 'localhost';
-  
-  // Log configuration state
-  console.log('🌍 Environment:', process.env.NODE_ENV || 'development');
-  
-  if (dbUrl) {
-    // Mask sensitive info in URL if it contains a password
-    const maskedUrl = dbUrl.replace(/:([^:@]+)@/, ':****@');
-    console.log(`🗄  Database: Connected via DATABASE_URL (${maskedUrl.split('@')[1] || 'remote'})`);
-  } else {
-    console.log(`🗄  Database: ${dbName}@${dbHost}`);
-  }
-  
-  console.log(`📡 CORS Allowed Origins:`, allowedOrigins);
+  console.log(`🚀 Roomzy API is LIVE on port ${port}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`🔗 Public URL: https://roomzy-backend.up.railway.app/api/v1`);
 }
 bootstrap();
+
+
 
