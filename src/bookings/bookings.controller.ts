@@ -94,6 +94,17 @@ export class BookingsController {
     return this.bookingsService.respondToBooking(id, user.sub, BookingStatus.REJECTED, rejectionReason);
   }
 
+  @Patch('owner/bookings/:id/confirm-payment')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER)
+  @ApiOperation({ summary: 'Confirm physical payment for a booking (Owner only)' })
+  confirmPayment(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.bookingsService.ownerConfirmPayment(id, user.sub);
+  }
+
   @Patch(':id/respond')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER)

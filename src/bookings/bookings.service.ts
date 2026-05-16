@@ -185,6 +185,18 @@ export class BookingsService {
     return this.bookingRepository.save(booking);
   }
 
+  async ownerConfirmPayment(id: string, ownerId: string): Promise<Booking> {
+    const booking = await this.bookingRepository.findOne({ where: { id, ownerId }, relations: ['room'] });
+    if (!booking) throw new NotFoundException('Booking not found or access denied');
+    
+    if (booking.status !== BookingStatus.APPROVED && booking.status !== BookingStatus.AWAITING_PAYMENT) {
+      if (booking.status === BookingStatus.CONFIRMED) return booking;
+      throw new BadRequestException('Booking must be approved before confirming payment');
+    }
+
+    return this.confirmBooking(id);
+  }
+
   async confirmBooking(id: string): Promise<Booking> {
     const booking = await this.bookingRepository.findOne({ where: { id }, relations: ['room'] });
     if (!booking) throw new NotFoundException('Booking not found');
