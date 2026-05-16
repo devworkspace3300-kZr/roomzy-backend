@@ -25,6 +25,7 @@ async function bootstrap() {
     allowedHeaders: ['*'], // Allow all headers to prevent preflight issues
     credentials:    true,
   });
+  
  
   // ── Global validation — auto-validates all DTO classes ───────
   app.useGlobalPipes(new ValidationPipe({
