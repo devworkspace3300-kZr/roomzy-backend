@@ -83,7 +83,10 @@ export class HostelsService {
     }
 
     if (query.institute) {
-      qb.andWhere('hostel.nearestInstituteId = :instId', { instId: query.institute });
+      qb.andWhere('(hostel.nearestInstituteId = :instId OR hostel.nearestInstituteId ILIKE :instPattern)', { 
+        instId: query.institute,
+        instPattern: `%${query.institute}%`
+      });
     }
 
     if (query.genderType) {
