@@ -59,15 +59,16 @@ async function bootstrap() {
   console.log(`🚀 Roomzy API running at:  http://localhost:${port}/api/v1`);
   console.log(`📖 Swagger docs available: http://localhost:${port}/api/docs`);
   
-  const configService = app.get(ConfigService);
-  const dbUrl = configService.get<string>('DATABASE_URL');
-  const dbName = configService.get<string>('DB_NAME') || configService.get<string>('PGDATABASE');
-  const dbHost = configService.get<string>('DB_HOST') || configService.get<string>('PGHOST');
+  // -- Database Connection Info Log --
+  const dbUrl = process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL;
+  const dbName = process.env.DB_NAME || process.env.PGDATABASE || 'roomzy_db';
+  const dbHost = process.env.DB_HOST || process.env.PGHOST || 'localhost';
   
   const dbInfo = dbUrl 
     ? 'Connected via DATABASE_URL'
-    : `${dbName || 'undefined'}@${dbHost || 'undefined'}`;
+    : `${dbName}@${dbHost}`;
     
   console.log(`🗄  Database: ${dbInfo}`);
 }
 bootstrap();
+

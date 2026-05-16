@@ -21,31 +21,40 @@
 import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 
 export const databaseConfig = (): TypeOrmModuleOptions => {
+  const dbUrl = process.env.DATABASE_URL;
+
   // If a DATABASE_URL is provided (e.g. Railway or Supabase)
-  if (process.env.DATABASE_URL) {
+  if (dbUrl) {
+    console.log('🔌 Database: Using DATABASE_URL connection mode');
     return {
       type: 'postgres',
-      url: process.env.DATABASE_URL,
+      url: dbUrl,
       ssl: {
         rejectUnauthorized: false,
       },
       autoLoadEntities: true,
       synchronize: false,
-      logging: true,
+      logging: ['error', 'warn'], // Cleaner logging for production
     };
   }
 
-  // Fallback to individual variables, checking for both custom and standard names
+  // Fallback to individual variables
+  const host = process.env.DB_HOST || process.env.PGHOST || 'localhost';
+  const port = parseInt(process.env.DB_PORT || process.env.PGPORT || '5432', 10);
+  const username = process.env.DB_USERNAME || process.env.PGUSER || 'postgres';
+  const database = process.env.DB_NAME || process.env.PGDATABASE || 'roomzy_db';
+
+  console.log(`🔌 Database: Using individual parameters (${host}:${port}/${database})`);
+
   return {
     type: 'postgres',
-    host:     process.env.DB_HOST     || process.env.PGHOST     || 'localhost',
-    port:     parseInt(process.env.DB_PORT || process.env.PGPORT || '5432', 10),
-    username: process.env.DB_USERNAME || process.env.PGUSER     || 'postgres',
+    host,
+    port,
+    username,
     password: process.env.DB_PASSWORD || process.env.PGPASSWORD || 'khizar0920',
-    database: process.env.DB_NAME     || process.env.PGDATABASE || 'roomzy_db',
+    database,
     autoLoadEntities: true,
     synchronize: false,
-    logging: true,
-    // No SSL for local dev fallback (standard Railway uses DATABASE_URL which has SSL enabled above)
+    logging: ['error', 'warn'],
   };
 };
