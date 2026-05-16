@@ -15,18 +15,30 @@ async function bootstrap() {
   app.setGlobalPrefix('api/v1');
  
   // ── CORS — allow your frontend to call this backend ─────────
+  const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    'https://roomzy.pk',
+    'https://www.roomzy.pk',
+    'https://roomzy-frontend.vercel.app', 
+    'https://roomzy.filenod.com',
+    'http://localhost:5173',
+    'http://localhost:3001',
+  ].filter(Boolean);
+
   app.enableCors({
-    origin: [
-      process.env.FRONTEND_URL,
-      'https://roomzy.pk',
-      'https://www.roomzy.pk',
-      'https://roomzy-frontend.vercel.app', // Added Vercel URL explicitly
-      'https://roomzy.filenod.com',
-      'http://localhost:5173',
-      'http://localhost:3001',
-    ].filter(Boolean),
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl)
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+        callback(null, true);
+      } else {
+        console.warn(`🔒 CORS: Request from origin ${origin} blocked`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods:        ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['*'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
     credentials:    true,
   });
   
@@ -64,11 +76,18 @@ async function bootstrap() {
   const dbName = process.env.DB_NAME || process.env.PGDATABASE || 'roomzy_db';
   const dbHost = process.env.DB_HOST || process.env.PGHOST || 'localhost';
   
-  const dbInfo = dbUrl 
-    ? 'Connected via DATABASE_URL'
-    : `${dbName}@${dbHost}`;
-    
-  console.log(`🗄  Database: ${dbInfo}`);
+  // Log configuration state
+  console.log('🌍 Environment:', process.env.NODE_ENV || 'development');
+  
+  if (dbUrl) {
+    // Mask sensitive info in URL if it contains a password
+    const maskedUrl = dbUrl.replace(/:([^:@]+)@/, ':****@');
+    console.log(`🗄  Database: Connected via DATABASE_URL (${maskedUrl.split('@')[1] || 'remote'})`);
+  } else {
+    console.log(`🗄  Database: ${dbName}@${dbHost}`);
+  }
+  
+  console.log(`📡 CORS Allowed Origins:`, allowedOrigins);
 }
 bootstrap();
 
