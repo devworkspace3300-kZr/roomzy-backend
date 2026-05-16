@@ -4,6 +4,7 @@ import { NestFactory }        from '@nestjs/core';
 import { ValidationPipe }     from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule }          from './app.module';
+import { ConfigService }      from '@nestjs/config';
 import { ResponseInterceptor }from './common/interceptors/response.interceptor';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
  
@@ -58,9 +59,15 @@ async function bootstrap() {
   console.log(`🚀 Roomzy API running at:  http://localhost:${port}/api/v1`);
   console.log(`📖 Swagger docs available: http://localhost:${port}/api/docs`);
   
-  const dbInfo = process.env.DATABASE_URL 
-    ? 'Connected via DATABASE_URL (Supabase)'
-    : `${process.env.DB_NAME}@${process.env.DB_HOST}`;
-  console.log(`🗄  Database Status: ${dbInfo}`);
+  const configService = app.get(ConfigService);
+  const dbUrl = configService.get<string>('DATABASE_URL');
+  const dbName = configService.get<string>('DB_NAME') || configService.get<string>('PGDATABASE');
+  const dbHost = configService.get<string>('DB_HOST') || configService.get<string>('PGHOST');
+  
+  const dbInfo = dbUrl 
+    ? 'Connected via DATABASE_URL'
+    : `${dbName || 'undefined'}@${dbHost || 'undefined'}`;
+    
+  console.log(`🗄  Database: ${dbInfo}`);
 }
 bootstrap();
