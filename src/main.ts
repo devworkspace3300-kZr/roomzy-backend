@@ -19,16 +19,16 @@ async function bootstrap() {
       process.env.FRONTEND_URL,
       'https://roomzy.pk',
       'https://www.roomzy.pk',
-      'https://roomzy.filenod.com',   // Production frontend
-      'http://localhost:5173',          // Local Vite dev server
-      'http://localhost:3001',          // Alternate local port
+      'https://roomzy-frontend.vercel.app', // Added Vercel URL explicitly
+      'https://roomzy.filenod.com',
+      'http://localhost:5173',
+      'http://localhost:3001',
     ].filter(Boolean),
     methods:        ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['*'], // Allow all headers to prevent preflight issues
+    allowedHeaders: ['*'],
     credentials:    true,
   });
   
- 
   // ── Global validation — auto-validates all DTO classes ───────
   app.useGlobalPipes(new ValidationPipe({
     whitelist:        true,  // Strip unknown fields from request body
@@ -51,12 +51,16 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('api/docs', app, document);
- 
+
   const port = process.env.PORT || 3000;
   await app.listen(port);
- 
+
   console.log(`🚀 Roomzy API running at:  http://localhost:${port}/api/v1`);
   console.log(`📖 Swagger docs available: http://localhost:${port}/api/docs`);
-  console.log(`🗄  Database: ${process.env.DB_NAME}@${process.env.DB_HOST}`);
+  
+  const dbInfo = process.env.DATABASE_URL 
+    ? 'Connected via DATABASE_URL (Supabase)'
+    : `${process.env.DB_NAME}@${process.env.DB_HOST}`;
+  console.log(`🗄  Database Status: ${dbInfo}`);
 }
 bootstrap();
