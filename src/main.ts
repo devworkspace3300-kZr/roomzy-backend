@@ -66,10 +66,11 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  // Railway and Docker require listening on 0.0.0.0
+  await app.listen(port, '0.0.0.0');
 
-  console.log(`🚀 Roomzy API running at:  http://localhost:${port}/api/v1`);
-  console.log(`📖 Swagger docs available: http://localhost:${port}/api/docs`);
+  console.log(`🚀 Roomzy API running at:  http://0.0.0.0:${port}/api/v1`);
+  console.log(`📖 Swagger docs available: http://0.0.0.0:${port}/api/docs`);
   
   // -- Database Connection Info Log --
   const dbUrl = process.env.DATABASE_URL || process.env.DATABASE_PRIVATE_URL;
