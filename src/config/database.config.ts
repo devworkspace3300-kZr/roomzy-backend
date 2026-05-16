@@ -23,18 +23,13 @@ import { TypeOrmModuleOptions } from '@nestjs/typeorm';
 export const databaseConfig = (): TypeOrmModuleOptions => ({
   type: 'postgres',
 
-  // ✅ USE SUPABASE CONNECTION STRING
   url: process.env.DATABASE_URL,
 
-  // ✅ REQUIRED FOR SUPABASE
   ssl: {
     rejectUnauthorized: false,
   },
 
-  // IMPORTANT
   autoLoadEntities: true,
-
-  entities: [__dirname + '/../**/*.entity{.ts,.js}'],
 
   synchronize: false,
 
