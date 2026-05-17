@@ -1,10 +1,11 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { UserRole } from '../common/enums/user-role.enum';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -33,5 +34,14 @@ export class PaymentsController {
   @ApiOperation({ summary: 'Get financial stats for admin dashboard' })
   async getStats() {
     return this.paymentsService.getFinanceStats();
+  }
+
+  @Get('owner/earnings')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.OWNER)
+  @ApiOperation({ summary: 'Get owner earnings stats and transactions' })
+  async getOwnerEarnings(@CurrentUser() user: any) {
+    return this.paymentsService.getOwnerEarnings(user.id);
   }
 }

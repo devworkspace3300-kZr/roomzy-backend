@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Body, Param, UseGuards, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -23,8 +23,8 @@ export class AdminController {
 
   @Get('owners/pending')
   @ApiOperation({ summary: 'Get all pending owner verification requests' })
-  async getPendingOwners() {
-    return this.adminService.getPendingOwners();
+  async getPendingOwners(@Query('status') status?: string) {
+    return this.adminService.getPendingOwners(status);
   }
 
   @Patch('owners/:id/verify')
@@ -43,5 +43,17 @@ export class AdminController {
   @ApiOperation({ summary: 'Schedule a physical property inspection' })
   async scheduleInspection(@Param('id') id: string, @CurrentUser() admin: any, @Body('scheduledAt') scheduledAt: Date) {
     return this.adminService.scheduleInspection(id, admin.sub, scheduledAt);
+  }
+
+  @Get('settings/commission')
+  @ApiOperation({ summary: 'Get current system commission rate (Admin only)' })
+  async getCommissionRate() {
+    return this.adminService.getCommissionRate();
+  }
+
+  @Patch('settings/commission')
+  @ApiOperation({ summary: 'Update system commission rate (Admin only)' })
+  async updateCommissionRate(@Body('rate') rate: number) {
+    return this.adminService.updateCommissionRate(rate);
   }
 }

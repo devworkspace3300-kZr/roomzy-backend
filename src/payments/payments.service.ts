@@ -35,7 +35,7 @@ export class PaymentsService {
     }
 
     const amount = booking.totalFirstMonth;
-    const commissionRate = 10; // 10% commission
+    const commissionRate = await this.bookingsService.getCommissionRate();
     const commissionPkr = Math.round((amount * commissionRate) / 100);
     const payoutPkr = amount - commissionPkr;
 
@@ -153,6 +153,35 @@ export class PaymentsService {
         hostel: p.hostel?.name,
         date: p.paidAt,
       }))
+    };
+  }
+
+  async getOwnerEarnings(ownerId: string) {
+    const payments = await this.paymentRepository.find({
+      where: { ownerId, status: PaymentStatus.PAID },
+      order: { paidAt: 'DESC' },
+      relations: ['student', 'hostel'],
+    });
+
+    const totalRevenue = payments.reduce((sum, p) => sum + p.amountPkr, 0);
+    const platformFees = payments.reduce((sum, p) => sum + p.commissionPkr, 0);
+    const netPayout = payments.reduce((sum, p) => sum + p.payoutPkr, 0);
+
+    return {
+      totalRevenue,
+      platformFees,
+      netPayout,
+      totalTransactions: payments.length,
+      recentTransactions: payments.map(p => ({
+        id: p.id,
+        amount: p.amountPkr,
+        fee: p.commissionPkr,
+        payout: p.payoutPkr,
+        student: p.student?.fullName || 'N/A',
+        hostel: p.hostel?.name || 'N/A',
+        date: p.paidAt,
+        reference: p.paymentReference || 'N/A',
+      })),
     };
   }
 

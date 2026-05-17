@@ -92,7 +92,7 @@ export class OwnersController {
         utilityBillUrl: utilityBillUrl as string,
       });
 
-      return { message: 'Documents submitted successfully. Your profile is now under review.' };
+      return { success: true };
     } catch (error) {
       console.error('Cloudinary Upload Error:', error);
       throw new BadRequestException('Failed to upload documents: ' + error.message);

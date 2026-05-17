@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { OwnerProfile } from '../owners/entities/owner-profile.entity';
@@ -22,13 +22,22 @@ export class AdminService {
     };
   }
 
-  async getPendingOwners() {
+  async getPendingOwners(status?: string) {
+    let where: any = {};
+    if (status && status !== 'all') {
+      if (status === 'pending') {
+        where = [
+          { status: 'pending' },
+          { status: 'under_review' }
+        ];
+      } else {
+        where.status = status;
+      }
+    }
     return this.verificationRepo.find({
-      where: [
-        { status: 'pending' },
-        { status: 'under_review' }
-      ],
-      relations: ['user']
+      where,
+      relations: ['user'],
+      order: { createdAt: 'DESC' }
     });
   }
 
@@ -43,7 +52,7 @@ export class AdminService {
     );
 
     await this.verificationRepo.update(
-      { userId: ownerId, status: 'pending' },
+      { userId: ownerId },
       { 
         status: 'verified',
         reviewedAt: new Date(),
@@ -64,7 +73,7 @@ export class AdminService {
     );
 
     await this.verificationRepo.update(
-      { userId: ownerId, status: 'pending' },
+      { userId: ownerId },
       { 
         status: 'rejected',
         rejectionReason: reason,
@@ -78,7 +87,7 @@ export class AdminService {
 
   async scheduleInspection(ownerId: string, adminId: string, scheduledAt: Date) {
     await this.verificationRepo.update(
-      { userId: ownerId, status: 'pending' },
+      { userId: ownerId },
       { 
         status: 'under_review',
         inspectionScheduledAt: scheduledAt,
@@ -87,5 +96,25 @@ export class AdminService {
     );
 
     return { message: 'Physical inspection scheduled' };
+  }
+
+  async getCommissionRate() {
+    const res = await this.verificationRepo.query(`
+      SELECT value FROM system_settings WHERE key = 'commission_rate'
+    `);
+    const rate = res.length > 0 ? parseFloat(res[0].value) : 10.0;
+    return { success: true, rate };
+  }
+
+  async updateCommissionRate(rate: number) {
+    if (typeof rate !== 'number' || rate < 0 || rate > 100) {
+      throw new BadRequestException('Commission rate must be a valid number between 0 and 100');
+    }
+    await this.verificationRepo.query(`
+      UPDATE system_settings
+      SET value = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'commission_rate'
+    `, [rate.toString()]);
+    return { success: true, message: 'Commission rate updated successfully', rate };
   }
 }

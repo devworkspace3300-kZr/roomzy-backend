@@ -56,13 +56,17 @@ export class HostelsController {
   @UseInterceptors(FileInterceptor('image', {
     storage: new CloudinaryStorage({
       cloudinary: cloudinary,
-      params: {
-        folder: 'roomzy/hostels',
-        allowed_formats: ['jpg', 'jpeg', 'png', 'gif']
-      } as any,
-    }),
+      params: async (req, file) => {
+        const ext = file.originalname.split('.').pop()?.toLowerCase() || 'jpg';
+        const format = ['jpg', 'jpeg', 'png', 'gif'].includes(ext) ? ext : 'jpg';
+        return {
+          folder: 'roomzy/hostels',
+          format: format
+        };
+      }
+    } as any),
     fileFilter: (req, file, cb) => {
-      if (!file.originalname.match(/\.(jpg|jpeg|png|gif)$/)) {
+      if (!file.originalname.match(/\.(jpg|jpeg|png|gif|jfif)$/i)) {
         return cb(new BadRequestException('Only image files are allowed!'), false);
       }
       cb(null, true);

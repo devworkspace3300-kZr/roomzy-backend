@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan } from 'typeorm';
@@ -9,9 +9,10 @@ import { CreateBookingDto } from './dto/create-booking.dto';
 import { Payment } from '../payments/entities/payment.entity';
 import { BookingStatus } from '../common/enums/booking-status.enum';
 import { RoomAvailabilityStatus } from '../common/enums/room-availability-status.enum';
+import { PaymentStatus } from '../common/enums/payment-status.enum';
 
 @Injectable()
-export class BookingsService {
+export class BookingsService implements OnModuleInit {
   constructor(
     @InjectRepository(Booking)
     private readonly bookingRepository: Repository<Booking>,
@@ -24,6 +25,86 @@ export class BookingsService {
   ) {}
 
   private readonly logger = new Logger(BookingsService.name);
+
+  async onModuleInit() {
+    await this.initSettingsTable();
+  }
+
+  private async initSettingsTable() {
+    try {
+      // 1. Create table if not exists
+      await this.bookingRepository.query(`
+        CREATE TABLE IF NOT EXISTS system_settings (
+          key VARCHAR(100) PRIMARY KEY,
+          value TEXT NOT NULL,
+          description TEXT,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
+      // 2. Insert default commission rate if not exists
+      const existing = await this.bookingRepository.query(`
+        SELECT * FROM system_settings WHERE key = 'commission_rate'
+      `);
+      if (existing.length === 0) {
+        await this.bookingRepository.query(`
+          INSERT INTO system_settings (key, value, description)
+          VALUES ('commission_rate', '10.0', 'Platform commission percentage applied to hostel bookings')
+        `);
+      }
+    } catch (error) {
+      this.logger.error('Failed to initialize system settings table', error);
+    }
+  }
+
+  async getCommissionRate(): Promise<number> {
+    try {
+      const res = await this.bookingRepository.query(`
+        SELECT value FROM system_settings WHERE key = 'commission_rate'
+      `);
+      if (res && res.length > 0) {
+        return parseFloat(res[0].value) || 10.0;
+      }
+    } catch (error) {
+      this.logger.error('Failed to fetch commission rate from DB', error);
+    }
+    return 10.0;
+  }
+
+  private isReservedState(status: BookingStatus): boolean {
+    return [
+      BookingStatus.APPROVED,
+      BookingStatus.AWAITING_PAYMENT,
+      BookingStatus.CONFIRMED,
+      BookingStatus.ACTIVE_STAY
+    ].includes(status);
+  }
+
+  async handleBedAllocation(roomId: string, oldStatus: BookingStatus, newStatus: BookingStatus): Promise<void> {
+    const wasReserved = this.isReservedState(oldStatus);
+    const isNowReserved = this.isReservedState(newStatus);
+
+    if (wasReserved === isNowReserved) {
+      return;
+    }
+
+    const room = await this.roomRepository.findOne({ where: { id: roomId } });
+    if (!room) return;
+
+    if (isNowReserved) {
+      if (room.availableBeds <= 0) {
+        throw new BadRequestException('All beds in this room are occupied.');
+      }
+      room.availableBeds -= 1;
+      if (room.availableBeds <= 0) {
+        room.availabilityStatus = RoomAvailabilityStatus.FULL;
+      }
+    } else {
+      room.availableBeds += 1;
+      room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
+    }
+    await this.roomRepository.save(room);
+  }
 
   async create(studentId: string, dto: CreateBookingDto): Promise<Booking> {
     const room = await this.roomRepository.findOne({ where: { id: dto.roomId }, relations: ['hostel'] });
@@ -171,6 +252,9 @@ export class BookingsService {
       throw new BadRequestException('Rejection reason is required');
     }
 
+    const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, status);
+
     if (status === BookingStatus.APPROVED) {
       booking.approvedAt = new Date();
       const deadline = new Date();
@@ -207,24 +291,55 @@ export class BookingsService {
       throw new BadRequestException('Booking must be approved before confirmation');
     }
 
-    // ALLOCATE BED ON PAYMENT
-    const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-    if (!room || room.availableBeds <= 0) {
-      throw new BadRequestException('All beds in this room have been taken by other students who completed their payment first.');
-    }
-
-    room.availableBeds -= 1;
-    if (room.availableBeds <= 0) {
-      room.availabilityStatus = RoomAvailabilityStatus.FULL;
-    }
-    await this.roomRepository.save(room);
+    const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.CONFIRMED);
 
     booking.status = BookingStatus.CONFIRMED;
     booking.confirmedAt = new Date();
     const savedBooking = await this.bookingRepository.save(booking);
 
+    // Create or update Payment Ledger Entry
+    const existingPayment = await this.paymentRepository.findOne({ where: { bookingId: booking.id } });
+    if (!existingPayment) {
+      const commRate = await this.getCommissionRate();
+      const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
+      const commPkr = Math.round(grossPkr * (commRate / 100));
+      const payoutPkr = grossPkr - commPkr;
+
+      const newPayment = this.paymentRepository.create({
+        bookingId: booking.id,
+        studentId: booking.studentId,
+        ownerId: booking.ownerId,
+        hostelId: booking.hostelId,
+        amountPkr: grossPkr,
+        commissionRate: commRate,
+        commissionPkr: commPkr,
+        payoutPkr: payoutPkr,
+        paymentReference: `PHYSICAL-${booking.id.substring(0, 8).toUpperCase()}`,
+        status: PaymentStatus.PAID,
+        paidAt: new Date(),
+      });
+      await this.paymentRepository.save(newPayment);
+    } else if (existingPayment.status !== PaymentStatus.PAID) {
+      const commRate = await this.getCommissionRate();
+      const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
+      const commPkr = Math.round(grossPkr * (commRate / 100));
+      const payoutPkr = grossPkr - commPkr;
+
+      existingPayment.amountPkr = grossPkr;
+      existingPayment.commissionRate = commRate;
+      existingPayment.commissionPkr = commPkr;
+      existingPayment.payoutPkr = payoutPkr;
+      existingPayment.status = PaymentStatus.PAID;
+      existingPayment.paidAt = new Date();
+      if (!existingPayment.paymentReference) {
+        existingPayment.paymentReference = `PHYSICAL-${booking.id.substring(0, 8).toUpperCase()}`;
+      }
+      await this.paymentRepository.save(existingPayment);
+    }
+
     // Auto-cancel other PENDING requests if the room is now full
-    if (room.availableBeds === 0) {
+    if (booking.room && booking.room.availableBeds === 0) {
       const otherPendings = await this.bookingRepository.find({
         where: {
           roomId: booking.roomId,
@@ -251,16 +366,11 @@ export class BookingsService {
       throw new BadRequestException('Only active or confirmed bookings can be completed');
     }
 
+    const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.COMPLETED);
+
     booking.status = BookingStatus.COMPLETED;
     booking.completedAt = new Date();
-    
-    // FREE UP BED
-    const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-    if (room) {
-      room.availableBeds += 1;
-      room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
-      await this.roomRepository.save(room);
-    }
 
     return this.bookingRepository.save(booking);
   }
@@ -271,17 +381,10 @@ export class BookingsService {
     if (booking.studentId !== studentId) throw new ForbiddenException('Access denied');
 
     const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.CANCELLED);
+
     booking.status = BookingStatus.CANCELLED;
     booking.cancellationReason = reason ?? null;
-
-    if (oldStatus === BookingStatus.CONFIRMED || oldStatus === BookingStatus.ACTIVE_STAY) {
-      const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-      if (room) {
-        room.availableBeds += 1;
-        room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
-        await this.roomRepository.save(room);
-      }
-    }
 
     return this.bookingRepository.save(booking);
   }
@@ -290,16 +393,8 @@ export class BookingsService {
     const booking = await this.bookingRepository.findOne({ where: { id } });
     if (!booking) throw new NotFoundException('Booking not found');
     
-    // RESTORE BED COUNT IF PAID/ACTIVE
-    if ([BookingStatus.CONFIRMED, BookingStatus.ACTIVE_STAY].includes(booking.status)) {
-      const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-      // SAFETY: Only increment if we won't exceed total_beds
-      if (room && room.availableBeds < room.totalBeds) {
-        room.availableBeds += 1;
-        room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
-        await this.roomRepository.save(room);
-      }
-    }
+    const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.CANCELLED);
 
     // AGGRESSIVE CLEANUP: Use raw SQL to clear all potential database-level dependencies
     const em = this.bookingRepository.manager;
@@ -343,34 +438,11 @@ export class BookingsService {
     const booking = await this.bookingRepository.findOne({ where: { id } });
     if (!booking) throw new NotFoundException('Booking not found');
     
-    // Handle status change impacts on room availability
+    // Handle status change impacts on room availability using the unified helper
     if (updateDto.status && updateDto.status !== booking.status) {
-        const oldStatus = booking.status;
-        const newStatus = updateDto.status;
-        
-        const isCurrentlyOccupying = [BookingStatus.APPROVED, BookingStatus.CONFIRMED, BookingStatus.ACTIVE_STAY].includes(oldStatus);
-        const willBeOccupying = [BookingStatus.APPROVED, BookingStatus.CONFIRMED, BookingStatus.ACTIVE_STAY].includes(newStatus);
-        
-        if (!isCurrentlyOccupying && willBeOccupying) {
-            // Decrement
-            const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-            if (room) {
-                room.availableBeds -= 1;
-                if (room.availableBeds <= 0) {
-                    room.availableBeds = 0;
-                    room.availabilityStatus = RoomAvailabilityStatus.FULL;
-                }
-                await this.roomRepository.save(room);
-            }
-        } else if (isCurrentlyOccupying && !willBeOccupying) {
-            // Increment
-            const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-            if (room) {
-                room.availableBeds += 1;
-                room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
-                await this.roomRepository.save(room);
-            }
-        }
+      const oldStatus = booking.status;
+      const newStatus = updateDto.status as BookingStatus;
+      await this.handleBedAllocation(booking.roomId, oldStatus, newStatus);
     }
     
     Object.assign(booking, updateDto);
@@ -390,13 +462,8 @@ export class BookingsService {
     if (expiredBookings.length > 0) {
       this.logger.log(`Expiring ${expiredBookings.length} bookings`);
       for (const booking of expiredBookings) {
-        // Restore bed count since it was reserved on approval
-        const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
-        if (room) {
-          room.availableBeds += 1;
-          room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
-          await this.roomRepository.save(room);
-        }
+        const oldStatus = booking.status;
+        await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.EXPIRED);
 
         booking.status = BookingStatus.EXPIRED;
         booking.cancellationReason = 'Payment deadline (24 hours) exceeded.';
