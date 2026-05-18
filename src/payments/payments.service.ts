@@ -196,6 +196,58 @@ export class PaymentsService {
     };
   }
 
+  async simulatePayment(bookingId: string) {
+    const booking = await this.bookingRepository.findOne({ 
+      where: { id: bookingId },
+      relations: ['student', 'hostel'] 
+    });
+
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    const amount = booking.totalFirstMonth || booking.monthlyPrice || 0;
+    const commissionSettings = await this.bookingsService.getCommissionSettings();
+    
+    let commissionPkr = 0;
+    if (commissionSettings.mode === 'percentage') {
+      commissionPkr = Math.round((amount * commissionSettings.rate) / 100);
+    } else if (commissionSettings.mode === 'fixed') {
+      commissionPkr = commissionSettings.fixedFee;
+    } else if (commissionSettings.mode === 'hybrid') {
+      const perc = Math.round((amount * commissionSettings.rate) / 100);
+      commissionPkr = perc + commissionSettings.fixedFee;
+    }
+
+    const commissionRate = commissionSettings.rate;
+    const payoutPkr = amount - commissionPkr;
+
+    let payment = await this.paymentRepository.findOne({ where: { bookingId } });
+    if (!payment) {
+      payment = this.paymentRepository.create({
+        bookingId,
+        studentId: booking.studentId,
+        ownerId: booking.ownerId,
+        hostelId: booking.hostelId,
+        amountPkr: amount,
+        commissionRate,
+        commissionPkr,
+        payoutPkr,
+        status: PaymentStatus.PAID,
+        paidAt: new Date(),
+        paymentReference: `SIMULATED-${bookingId.substring(0, 8).toUpperCase()}`,
+        isTest: true,
+      });
+    } else {
+      payment.status = PaymentStatus.PAID;
+      payment.paidAt = new Date();
+      payment.paymentReference = `SIMULATED-${bookingId.substring(0, 8).toUpperCase()}`;
+    }
+    await this.paymentRepository.save(payment);
+
+    await this.bookingsService.confirmBooking(bookingId);
+
+    return { success: true, message: 'Simulated payment successful' };
+  }
+
   private generateSignature(data: any, passphrase?: string): string {
     let getString = '';
     for (const key in data) {

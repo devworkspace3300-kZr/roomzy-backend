@@ -21,6 +21,15 @@ export class PaymentsController {
     return this.paymentsService.initiatePayment(bookingId);
   }
 
+  @Post('simulate/:bookingId')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.STUDENT)
+  @ApiOperation({ summary: 'Simulate a successful payment instantly for demo purposes' })
+  async simulate(@Param('bookingId') bookingId: string) {
+    return this.paymentsService.simulatePayment(bookingId);
+  }
+
   @Post('itn')
   @ApiOperation({ summary: 'PayFast ITN Callback (Webhook)' })
   async handleITN(@Body() data: any) {

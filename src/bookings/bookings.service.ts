@@ -415,7 +415,7 @@ export class BookingsService implements OnModuleInit {
         this.logger.error(`Failed to record payout ledger: ${e.message}`);
       });
 
-    } else if (existingPayment.status !== PaymentStatus.PAID) {
+    } else {
       const commSettings = await this.getCommissionSettings();
       const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
 

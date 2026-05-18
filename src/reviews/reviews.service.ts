@@ -93,7 +93,7 @@ export class ReviewsService {
       await this.dataSource.query(`
         UPDATE hostels 
         SET 
-          average_rating = (SELECT COALESCE(ROUND(AVG(overall_rating), 2), 0.00) FROM reviews WHERE hostel_id = $1 AND status = 'approved'),
+          average_rating = (SELECT COALESCE(ROUND(AVG(overall_rating)::numeric, 2), 0.00) FROM reviews WHERE hostel_id = $1 AND status = 'approved'),
           total_reviews = (SELECT COUNT(*) FROM reviews WHERE hostel_id = $1 AND status = 'approved')
         WHERE id = $1
       `, [hostelId]);
