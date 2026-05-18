@@ -35,8 +35,19 @@ export class PaymentsService {
     }
 
     const amount = booking.totalFirstMonth;
-    const commissionRate = await this.bookingsService.getCommissionRate();
-    const commissionPkr = Math.round((amount * commissionRate) / 100);
+    const commissionSettings = await this.bookingsService.getCommissionSettings();
+    
+    let commissionPkr = 0;
+    if (commissionSettings.mode === 'percentage') {
+      commissionPkr = Math.round((amount * commissionSettings.rate) / 100);
+    } else if (commissionSettings.mode === 'fixed') {
+      commissionPkr = commissionSettings.fixedFee;
+    } else if (commissionSettings.mode === 'hybrid') {
+      const perc = Math.round((amount * commissionSettings.rate) / 100);
+      commissionPkr = perc + commissionSettings.fixedFee;
+    }
+
+    const commissionRate = commissionSettings.rate; // kept for legacy compat in db column if needed
     const payoutPkr = amount - commissionPkr;
 
     // Create or update payment record

@@ -57,18 +57,28 @@ export class BookingsService implements OnModuleInit {
     }
   }
 
-  async getCommissionRate(): Promise<number> {
+  async getCommissionSettings(): Promise<{mode: string, rate: number, fixedFee: number}> {
     try {
       const res = await this.bookingRepository.query(`
-        SELECT value FROM system_settings WHERE key = 'commission_rate'
+        SELECT value FROM system_settings WHERE key = 'commission_settings'
       `);
       if (res && res.length > 0) {
-        return parseFloat(res[0].value) || 10.0;
+        try {
+          return JSON.parse(res[0].value);
+        } catch (e) {}
+      }
+
+      // Fallback to old format
+      const oldRes = await this.bookingRepository.query(`
+        SELECT value FROM system_settings WHERE key = 'commission_rate'
+      `);
+      if (oldRes && oldRes.length > 0) {
+        return { mode: 'percentage', rate: parseFloat(oldRes[0].value) || 10.0, fixedFee: 0 };
       }
     } catch (error) {
       this.logger.error('Failed to fetch commission rate from DB', error);
     }
-    return 10.0;
+    return { mode: 'percentage', rate: 10.0, fixedFee: 0 };
   }
 
   private isReservedState(status: BookingStatus): boolean {
@@ -229,7 +239,52 @@ export class BookingsService implements OnModuleInit {
       await this.roomRepository.save(room);
     }
     
+    // Update active_stays record status to completed in database!
+    try {
+      const em = this.bookingRepository.manager;
+      await em.query(
+        `UPDATE active_stays SET status = 'completed', actual_end_date = $1 WHERE booking_id = $2`,
+        [new Date(), booking.id]
+      );
+      this.logger.log(`Updated active stay checkout in database for booking ${booking.id}`);
+    } catch (err) {
+      this.logger.error(`Failed to update active stay checkout in database: ${err.message}`);
+    }
+    
     return this.bookingRepository.save(booking);
+  }
+
+  async ownerConfirmMoveIn(id: string, ownerId: string): Promise<Booking> {
+    const booking = await this.bookingRepository.findOne({ where: { id, ownerId }, relations: ['room'] });
+    if (!booking) throw new NotFoundException('Booking not found or access denied');
+    
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new BadRequestException('Booking must be confirmed before move-in can be processed');
+    }
+
+    const oldStatus = booking.status;
+    await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.ACTIVE_STAY);
+
+    booking.status = BookingStatus.ACTIVE_STAY;
+    booking.confirmedAt = booking.confirmedAt || new Date();
+    const savedBooking = await this.bookingRepository.save(booking);
+
+    // Create a record in raw SQL active_stays table to match database schema constraints!
+    try {
+      const em = this.bookingRepository.manager;
+      const expectedEnd = booking.expectedEndDate || new Date();
+      await em.query(
+        `INSERT INTO active_stays (booking_id, student_id, owner_id, hostel_id, room_id, actual_move_in_date, expected_end_date, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+         ON CONFLICT (booking_id) DO NOTHING`,
+        [booking.id, booking.studentId, booking.ownerId, booking.hostelId, booking.roomId, new Date(), expectedEnd]
+      );
+      this.logger.log(`Created active stay entry for booking ${booking.id}`);
+    } catch (err) {
+      this.logger.error(`Failed to create active stays database entry: ${err.message}`);
+    }
+
+    return savedBooking;
   }
 
   async findAll(): Promise<Booking[]> {
@@ -301,9 +356,17 @@ export class BookingsService implements OnModuleInit {
     // Create or update Payment Ledger Entry
     const existingPayment = await this.paymentRepository.findOne({ where: { bookingId: booking.id } });
     if (!existingPayment) {
-      const commRate = await this.getCommissionRate();
+      const commSettings = await this.getCommissionSettings();
       const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
-      const commPkr = Math.round(grossPkr * (commRate / 100));
+      
+      let commPkr = 0;
+      if (commSettings.mode === 'percentage') {
+        commPkr = Math.round(grossPkr * (commSettings.rate / 100));
+      } else if (commSettings.mode === 'fixed') {
+        commPkr = commSettings.fixedFee;
+      } else if (commSettings.mode === 'hybrid') {
+        commPkr = Math.round(grossPkr * (commSettings.rate / 100)) + commSettings.fixedFee;
+      }
       const payoutPkr = grossPkr - commPkr;
 
       const newPayment = this.paymentRepository.create({
@@ -312,7 +375,7 @@ export class BookingsService implements OnModuleInit {
         ownerId: booking.ownerId,
         hostelId: booking.hostelId,
         amountPkr: grossPkr,
-        commissionRate: commRate,
+        commissionRate: commSettings.rate,
         commissionPkr: commPkr,
         payoutPkr: payoutPkr,
         paymentReference: `PHYSICAL-${booking.id.substring(0, 8).toUpperCase()}`,
@@ -321,13 +384,21 @@ export class BookingsService implements OnModuleInit {
       });
       await this.paymentRepository.save(newPayment);
     } else if (existingPayment.status !== PaymentStatus.PAID) {
-      const commRate = await this.getCommissionRate();
+      const commSettings = await this.getCommissionSettings();
       const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
-      const commPkr = Math.round(grossPkr * (commRate / 100));
+
+      let commPkr = 0;
+      if (commSettings.mode === 'percentage') {
+        commPkr = Math.round(grossPkr * (commSettings.rate / 100));
+      } else if (commSettings.mode === 'fixed') {
+        commPkr = commSettings.fixedFee;
+      } else if (commSettings.mode === 'hybrid') {
+        commPkr = Math.round(grossPkr * (commSettings.rate / 100)) + commSettings.fixedFee;
+      }
       const payoutPkr = grossPkr - commPkr;
 
       existingPayment.amountPkr = grossPkr;
-      existingPayment.commissionRate = commRate;
+      existingPayment.commissionRate = commSettings.rate;
       existingPayment.commissionPkr = commPkr;
       existingPayment.payoutPkr = payoutPkr;
       existingPayment.status = PaymentStatus.PAID;
@@ -396,42 +467,47 @@ export class BookingsService implements OnModuleInit {
     const oldStatus = booking.status;
     await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.CANCELLED);
 
-    // AGGRESSIVE CLEANUP: Use raw SQL to clear all potential database-level dependencies
-    const em = this.bookingRepository.manager;
-    
-    const cleanupQueries = [
-        { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id = $1)`, t: 'payouts' },
-        { q: `DELETE FROM refunds WHERE booking_id = $1`, t: 'refunds' },
-        { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
-        { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
-        { q: `DELETE FROM review_category_ratings WHERE review_id IN (SELECT id FROM reviews WHERE booking_id = $1)`, t: 'review_category_ratings' },
-        { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
-        { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
-        { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE booking_id = $1)`, t: 'complaint_escalations' },
-        { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
-        { q: `DELETE FROM conversations WHERE booking_id = $1`, t: 'conversations' },
-        { q: `DELETE FROM email_logs WHERE reference_id = $1 AND reference_type = 'booking'`, t: 'email_logs' },
-        { q: `DELETE FROM audit_logs WHERE entity_id = $1 AND entity_type = 'booking'`, t: 'audit_logs' },
-        { q: `DELETE FROM notifications WHERE reference_id = $1 AND reference_type = 'booking'`, t: 'notifications' },
-        { q: `DELETE FROM admin_notes WHERE entity_id = $1 AND entity_type = 'booking'`, t: 'admin_notes' }
-    ];
+    await this.bookingRepository.manager.transaction(async em => {
+      // Defer constraints validation in Postgres if possible
+      await em.query('SET CONSTRAINTS ALL DEFERRED').catch(() => {});
 
-    for (const query of cleanupQueries) {
-        try {
-            await em.query(query.q, [id]);
-        } catch (err) {
-            this.logger.warn(`Cleanup skipped for ${query.t}: ${err.message}`);
-        }
-    }
-    
-    // Final nuclear option: delete the booking itself via raw SQL
-    try {
-        await em.query(`DELETE FROM bookings WHERE id = $1`, [id]);
-        this.logger.log(`Successfully deleted booking ${id} and all its dependencies.`);
-    } catch (err) {
-        this.logger.error(`CRITICAL: FINAL DELETE FAILED for booking ${id}: ${err.message}`);
-        throw err;
-    }
+      const cleanupQueries = [
+          { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id = $1)`, t: 'payouts' },
+          { q: `DELETE FROM refunds WHERE booking_id = $1`, t: 'refunds' },
+          { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
+          { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
+          { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
+          { q: `DELETE FROM review_category_ratings WHERE review_id IN (SELECT id FROM reviews WHERE booking_id = $1)`, t: 'review_category_ratings' },
+          { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
+          { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
+          { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE booking_id = $1)`, t: 'complaint_escalations' },
+          { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
+          { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
+          { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },
+          { q: `DELETE FROM conversations WHERE booking_id = $1`, t: 'conversations' },
+          { q: `UPDATE conversations SET booking_id = NULL WHERE booking_id = $1`, t: 'conversations set null' },
+          { q: `DELETE FROM email_logs WHERE reference_id = $1`, t: 'email_logs' },
+          { q: `DELETE FROM audit_logs WHERE entity_id = $1`, t: 'audit_logs' },
+          { q: `DELETE FROM notifications WHERE reference_id = $1`, t: 'notifications' },
+          { q: `DELETE FROM admin_notes WHERE entity_id = $1`, t: 'admin_notes' }
+      ];
+
+      for (const query of cleanupQueries) {
+          try {
+              await em.query(query.q, [id]);
+          } catch (err) {
+              this.logger.warn(`Cleanup skipped for ${query.t}: ${err.message}`);
+          }
+      }
+      
+      try {
+          await em.query(`DELETE FROM bookings WHERE id = $1`, [id]);
+          this.logger.log(`Successfully deleted booking ${id} and all its dependencies.`);
+      } catch (err) {
+          this.logger.error(`CRITICAL: FINAL DELETE FAILED for booking ${id}: ${err.message}`);
+          throw err;
+      }
+    });
   }
 
   async adminUpdate(id: string, updateDto: any): Promise<Booking> {

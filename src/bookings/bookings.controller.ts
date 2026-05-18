@@ -105,6 +105,17 @@ export class BookingsController {
     return this.bookingsService.ownerConfirmPayment(id, user.sub);
   }
 
+  @Patch('owner/bookings/:id/move-in')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OWNER)
+  @ApiOperation({ summary: 'Confirm student move-in / activate tenancy (Owner only)' })
+  confirmMoveIn(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.bookingsService.ownerConfirmMoveIn(id, user.sub);
+  }
+
   @Patch(':id/respond')
   @UseGuards(RolesGuard)
   @Roles(UserRole.OWNER)

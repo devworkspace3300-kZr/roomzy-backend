@@ -52,8 +52,12 @@ export class AdminController {
   }
 
   @Patch('settings/commission')
-  @ApiOperation({ summary: 'Update system commission rate (Admin only)' })
-  async updateCommissionRate(@Body('rate') rate: number) {
-    return this.adminService.updateCommissionRate(rate);
+  @ApiOperation({ summary: 'Update system commission settings (Admin only)' })
+  async updateCommissionRate(
+    @Body('rate') rate: number,
+    @Body('fixedFee') fixedFee?: number,
+    @Body('mode') mode?: string
+  ) {
+    return this.adminService.updateCommissionRate(rate, fixedFee, mode);
   }
 }

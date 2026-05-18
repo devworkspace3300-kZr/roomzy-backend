@@ -100,21 +100,40 @@ export class AdminService {
 
   async getCommissionRate() {
     const res = await this.verificationRepo.query(`
+      SELECT value FROM system_settings WHERE key = 'commission_settings'
+    `);
+    
+    if (res.length > 0) {
+      try {
+        const settings = JSON.parse(res[0].value);
+        return { success: true, ...settings };
+      } catch (e) {
+        // Fallback
+      }
+    }
+
+    // Fallback to old format
+    const oldRes = await this.verificationRepo.query(`
       SELECT value FROM system_settings WHERE key = 'commission_rate'
     `);
-    const rate = res.length > 0 ? parseFloat(res[0].value) : 10.0;
-    return { success: true, rate };
+    const rate = oldRes.length > 0 ? parseFloat(oldRes[0].value) : 10.0;
+    return { success: true, mode: 'percentage', rate, fixedFee: 0 };
   }
 
-  async updateCommissionRate(rate: number) {
+  async updateCommissionRate(rate: number, fixedFee: number = 0, mode: string = 'percentage') {
     if (typeof rate !== 'number' || rate < 0 || rate > 100) {
       throw new BadRequestException('Commission rate must be a valid number between 0 and 100');
     }
+    
+    const settings = { mode, rate, fixedFee };
+
     await this.verificationRepo.query(`
-      UPDATE system_settings
-      SET value = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE key = 'commission_rate'
-    `, [rate.toString()]);
-    return { success: true, message: 'Commission rate updated successfully', rate };
+      INSERT INTO system_settings (key, value, description)
+      VALUES ('commission_settings', $1, 'Platform commission settings json')
+      ON CONFLICT (key) DO UPDATE
+      SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+    `, [JSON.stringify(settings)]);
+
+    return { success: true, message: 'Commission settings updated successfully', ...settings };
   }
 }

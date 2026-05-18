@@ -23,6 +23,7 @@ import { Conversation } from './chat/entities/conversation.entity';
 import { Message } from './chat/entities/message.entity';
 
 // Import Modules
+import { ReviewsModule } from './reviews/reviews.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { UsersModule } from './users/users.module';
@@ -76,6 +77,7 @@ import { APP_GUARD } from '@nestjs/core';
     InstitutesModule,
     PaymentsModule,
     ChatModule,
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [

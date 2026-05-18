@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Hostel } from './entities/hostel.entity';
@@ -10,6 +10,8 @@ import { GenderType } from '../common/enums/gender-type.enum';
 
 @Injectable()
 export class HostelsService {
+  private readonly logger = new Logger(HostelsService.name);
+
   constructor(
     @InjectRepository(Hostel)
     private readonly hostelRepository: Repository<Hostel>,
@@ -147,7 +149,7 @@ export class HostelsService {
   }
 
   async findAllPending(): Promise<Hostel[]> {
-    return this.hostelRepository.find({
+    const hostels = await this.hostelRepository.find({
       where: [
         { status: HostelStatus.SUBMITTED },
         { status: HostelStatus.INSPECTION_SCHEDULED },
@@ -156,18 +158,50 @@ export class HostelsService {
       relations: ['owner', 'owner.ownerProfile', 'images', 'amenities'],
       order: { createdAt: 'DESC' }
     });
+
+    for (const hostel of hostels) {
+      if (hostel.owner?.id) {
+        const verificationRequest = await this.hostelRepository.manager
+          .getRepository('OwnerVerificationRequest')
+          .findOne({
+            where: { userId: hostel.owner.id },
+            order: { createdAt: 'DESC' }
+          });
+        if (verificationRequest && hostel.owner.ownerProfile) {
+          hostel.owner.ownerProfile.verificationRequest = verificationRequest;
+        }
+      }
+    }
+
+    return hostels;
   }
 
   async findAllHistory(): Promise<Hostel[]> {
-    return this.hostelRepository.find({
+    const hostels = await this.hostelRepository.find({
       where: [
         { status: HostelStatus.VERIFIED },
         { status: HostelStatus.REJECTED },
         { status: HostelStatus.DISABLED }
       ],
-      relations: ['owner', 'images'],
+      relations: ['owner', 'owner.ownerProfile', 'images'],
       order: { updatedAt: 'DESC' }
     });
+
+    for (const hostel of hostels) {
+      if (hostel.owner?.id) {
+        const verificationRequest = await this.hostelRepository.manager
+          .getRepository('OwnerVerificationRequest')
+          .findOne({
+            where: { userId: hostel.owner.id },
+            order: { createdAt: 'DESC' }
+          });
+        if (verificationRequest && hostel.owner.ownerProfile) {
+          hostel.owner.ownerProfile.verificationRequest = verificationRequest;
+        }
+      }
+    }
+
+    return hostels;
   }
 
   async findOne(id: string): Promise<Hostel> {
@@ -213,7 +247,90 @@ export class HostelsService {
   async remove(id: string): Promise<void> {
     const hostel = await this.hostelRepository.findOne({ where: { id } });
     if (!hostel) throw new NotFoundException('Hostel not found');
-    await this.hostelRepository.remove(hostel);
+
+    const em = this.hostelRepository.manager;
+
+    await em.transaction(async (transactionalEntityManager) => {
+      // 1. Get all bookings for this hostel
+      const bookings = await transactionalEntityManager.query(
+        `SELECT id FROM bookings WHERE hostel_id = $1`,
+        [id]
+      );
+
+      // Defer constraints validation in Postgres if possible
+      await transactionalEntityManager.query('SET CONSTRAINTS ALL DEFERRED').catch(() => {});
+
+      // 2. Loop through and delete each booking using the robust cleanup queries
+      for (const b of bookings) {
+        const bookingId = b.id;
+        const cleanupQueries = [
+            { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id = $1)`, t: 'payouts' },
+            { q: `DELETE FROM refunds WHERE booking_id = $1`, t: 'refunds' },
+            { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
+            { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
+            { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
+            { q: `DELETE FROM review_category_ratings WHERE review_id IN (SELECT id FROM reviews WHERE booking_id = $1)`, t: 'review_category_ratings' },
+            { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
+            { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
+            { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE booking_id = $1)`, t: 'complaint_escalations' },
+            { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
+            { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
+            { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },
+            { q: `DELETE FROM conversations WHERE booking_id = $1`, t: 'conversations' },
+            { q: `UPDATE conversations SET booking_id = NULL WHERE booking_id = $1`, t: 'conversations set null' },
+            { q: `DELETE FROM email_logs WHERE reference_id = $1`, t: 'email_logs' },
+            { q: `DELETE FROM audit_logs WHERE entity_id = $1`, t: 'audit_logs' },
+            { q: `DELETE FROM notifications WHERE reference_id = $1`, t: 'notifications' },
+            { q: `DELETE FROM admin_notes WHERE entity_id = $1`, t: 'admin_notes' },
+            { q: `DELETE FROM bookings WHERE id = $1`, t: 'bookings' }
+        ];
+
+        for (const query of cleanupQueries) {
+            try {
+                await transactionalEntityManager.query(query.q, [bookingId]);
+            } catch (err) {
+                this.logger.warn(`Hostel-Booking Cleanup skipped for ${query.t}: ${err.message}`);
+            }
+        }
+      }
+
+      // 3. Cleanup any other hostel-level dependencies that might remain
+      const hostelCleanupQueries = [
+          { q: `DELETE FROM payouts WHERE owner_id = (SELECT owner_id FROM hostels WHERE id = $1)`, t: 'hostel payouts' },
+          { q: `DELETE FROM refunds WHERE hostel_id = $1`, t: 'hostel refunds' },
+          { q: `DELETE FROM payments WHERE hostel_id = $1`, t: 'hostel payments' },
+          { q: `DELETE FROM reviews WHERE hostel_id = $1`, t: 'hostel reviews' },
+          { q: `DELETE FROM active_stays WHERE hostel_id = $1`, t: 'hostel active_stays' },
+          { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE hostel_id = $1)`, t: 'hostel complaint_escalations' },
+          { q: `DELETE FROM complaints WHERE hostel_id = $1`, t: 'hostel complaints' },
+          { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE hostel_id = $1)`, t: 'hostel messages' },
+          { q: `DELETE FROM conversations WHERE hostel_id = $1`, t: 'hostel conversations' },
+          { q: `DELETE FROM saved_hostels WHERE hostel_id = $1`, t: 'hostel saved_hostels' },
+          { q: `DELETE FROM hostel_inspection_reports WHERE hostel_id = $1`, t: 'hostel inspection reports' },
+          { q: `DELETE FROM hostel_documents WHERE hostel_id = $1`, t: 'hostel documents' },
+          { q: `DELETE FROM hostel_amenities WHERE hostel_id = $1`, t: 'hostel amenities' },
+          { q: `DELETE FROM hostel_images WHERE hostel_id = $1`, t: 'hostel images' },
+          { q: `DELETE FROM room_images WHERE room_id IN (SELECT id FROM rooms WHERE hostel_id = $1)`, t: 'room images' },
+          { q: `DELETE FROM rooms WHERE hostel_id = $1`, t: 'hostel rooms' }
+      ];
+
+      for (const query of hostelCleanupQueries) {
+          try {
+              await transactionalEntityManager.query(query.q, [id]);
+          } catch (err) {
+              this.logger.warn(`Hostel Cleanup skipped for ${query.t}: ${err.message}`);
+          }
+      }
+
+      // 4. Finally delete the hostel itself via raw SQL
+      try {
+          await transactionalEntityManager.query(`DELETE FROM hostels WHERE id = $1`, [id]);
+          this.logger.log(`Successfully deleted hostel ${id} and all its dependencies.`);
+      } catch (err) {
+          this.logger.error(`CRITICAL: FINAL DELETE FAILED for hostel ${id}: ${err.message}`);
+          throw err;
+      }
+    });
   }
 
   async adminUpdate(id: string, updateDto: any): Promise<Hostel> {

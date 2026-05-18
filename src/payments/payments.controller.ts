@@ -42,6 +42,6 @@ export class PaymentsController {
   @Roles(UserRole.OWNER)
   @ApiOperation({ summary: 'Get owner earnings stats and transactions' })
   async getOwnerEarnings(@CurrentUser() user: any) {
-    return this.paymentsService.getOwnerEarnings(user.id);
+    return this.paymentsService.getOwnerEarnings(user.sub);
   }
 }
