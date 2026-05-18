@@ -10,7 +10,7 @@ export class ReviewsService {
   async createReview(studentId: string, bookingId: string, dto: any) {
     // Verify booking belongs to student and is completed
     const bookings = await this.dataSource.query(`
-      SELECT * FROM bookings WHERE id = $1 AND "studentId" = $2
+      SELECT * FROM bookings WHERE id = $1 AND student_id = $2
     `, [bookingId, studentId]);
 
     if (!bookings || bookings.length === 0) {
@@ -40,10 +40,10 @@ export class ReviewsService {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending')
         RETURNING *
       `, [
-        bookingId, studentId, booking.hostelId, overall_rating, cleanliness || overall_rating,
+        bookingId, studentId, booking.hostel_id, overall_rating, cleanliness || overall_rating,
         food_quality || overall_rating, safety_security || overall_rating, facilities_match || overall_rating,
         owner_management || overall_rating, value_for_money || overall_rating,
-        title || 'Great Stay!', body, booking.durationMonths || 1
+        title || 'Great Stay!', body, booking.duration_months || 1
       ]);
 
       return { success: true, message: 'Review submitted and is pending approval', data: result[0] };
@@ -82,6 +82,23 @@ export class ReviewsService {
     await this.dataSource.query(`
       UPDATE reviews SET status = 'approved' WHERE id = $1
     `, [id]);
+
+    // Recalculate hostel average rating
+    const reviewData = await this.dataSource.query(`
+      SELECT hostel_id FROM reviews WHERE id = $1
+    `, [id]);
+    
+    if (reviewData && reviewData.length > 0) {
+      const hostelId = reviewData[0].hostel_id;
+      await this.dataSource.query(`
+        UPDATE hostels 
+        SET 
+          average_rating = (SELECT COALESCE(ROUND(AVG(overall_rating), 2), 0.00) FROM reviews WHERE hostel_id = $1 AND status = 'approved'),
+          total_reviews = (SELECT COUNT(*) FROM reviews WHERE hostel_id = $1 AND status = 'approved')
+        WHERE id = $1
+      `, [hostelId]);
+    }
+
     return { success: true, message: 'Review approved successfully' };
   }
 
