@@ -25,12 +25,6 @@ export class ReviewsController {
     return this.reviewsService.createReview(user.sub, bookingId, dto);
   }
 
-  @Get('hostel/:hostelId')
-  @ApiOperation({ summary: 'Get all approved reviews for a hostel' })
-  async getHostelReviews(@Param('hostelId') hostelId: string) {
-    return this.reviewsService.getHostelReviews(hostelId);
-  }
-
   @Get('admin/all')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -38,6 +32,12 @@ export class ReviewsController {
   @ApiOperation({ summary: 'Get all reviews for moderation' })
   async getAllReviewsForAdmin() {
     return this.reviewsService.getAllReviewsAdmin();
+  }
+
+  @Get('hostel/:hostelId')
+  @ApiOperation({ summary: 'Get all approved reviews for a hostel' })
+  async getHostelReviews(@Param('hostelId') hostelId: string) {
+    return this.reviewsService.getHostelReviews(hostelId);
   }
 
   @Patch(':id/approve')
