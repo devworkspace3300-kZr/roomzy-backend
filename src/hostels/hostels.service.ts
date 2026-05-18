@@ -269,10 +269,8 @@ export class HostelsService {
             { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
             { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
             { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
-            { q: `DELETE FROM review_category_ratings WHERE review_id IN (SELECT id FROM reviews WHERE booking_id = $1)`, t: 'review_category_ratings' },
             { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
             { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
-            { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE booking_id = $1)`, t: 'complaint_escalations' },
             { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
             { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
             { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },
@@ -296,12 +294,11 @@ export class HostelsService {
 
       // 3. Cleanup any other hostel-level dependencies that might remain
       const hostelCleanupQueries = [
-          { q: `DELETE FROM payouts WHERE owner_id = (SELECT owner_id FROM hostels WHERE id = $1)`, t: 'hostel payouts' },
+          { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE hostel_id = $1)`, t: 'hostel payouts' },
           { q: `DELETE FROM refunds WHERE hostel_id = $1`, t: 'hostel refunds' },
           { q: `DELETE FROM payments WHERE hostel_id = $1`, t: 'hostel payments' },
           { q: `DELETE FROM reviews WHERE hostel_id = $1`, t: 'hostel reviews' },
           { q: `DELETE FROM active_stays WHERE hostel_id = $1`, t: 'hostel active_stays' },
-          { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE hostel_id = $1)`, t: 'hostel complaint_escalations' },
           { q: `DELETE FROM complaints WHERE hostel_id = $1`, t: 'hostel complaints' },
           { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE hostel_id = $1)`, t: 'hostel messages' },
           { q: `DELETE FROM conversations WHERE hostel_id = $1`, t: 'hostel conversations' },

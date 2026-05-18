@@ -77,4 +77,18 @@ export class ReviewsService {
     `);
     return { success: true, data: reviews };
   }
+
+  async approveReview(id: string) {
+    await this.dataSource.query(`
+      UPDATE reviews SET status = 'approved' WHERE id = $1
+    `, [id]);
+    return { success: true, message: 'Review approved successfully' };
+  }
+
+  async rejectReview(id: string) {
+    await this.dataSource.query(`
+      UPDATE reviews SET status = 'rejected' WHERE id = $1
+    `, [id]);
+    return { success: true, message: 'Review rejected successfully' };
+  }
 }

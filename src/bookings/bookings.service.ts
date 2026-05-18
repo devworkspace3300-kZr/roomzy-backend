@@ -52,6 +52,17 @@ export class BookingsService implements OnModuleInit {
           VALUES ('commission_rate', '10.0', 'Platform commission percentage applied to hostel bookings')
         `);
       }
+
+      // 3. Insert default commission settings if not exists
+      const existingSettings = await this.bookingRepository.query(`
+        SELECT * FROM system_settings WHERE key = 'commission_settings'
+      `);
+      if (existingSettings.length === 0) {
+        await this.bookingRepository.query(`
+          INSERT INTO system_settings (key, value, description)
+          VALUES ('commission_settings', '{"mode":"percentage","rate":10,"fixedFee":0}', 'Platform commission configuration JSON')
+        `);
+      }
     } catch (error) {
       this.logger.error('Failed to initialize system settings table', error);
     }
@@ -477,10 +488,8 @@ export class BookingsService implements OnModuleInit {
           { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
           { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
           { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
-          { q: `DELETE FROM review_category_ratings WHERE review_id IN (SELECT id FROM reviews WHERE booking_id = $1)`, t: 'review_category_ratings' },
           { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
           { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
-          { q: `DELETE FROM complaint_escalations WHERE complaint_id IN (SELECT id FROM complaints WHERE booking_id = $1)`, t: 'complaint_escalations' },
           { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
           { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
           { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },

@@ -58,7 +58,7 @@ export class HostelsController {
       cloudinary: cloudinary,
       params: async (req, file) => {
         const ext = file.originalname.split('.').pop()?.toLowerCase() || 'jpg';
-        const format = ['jpg', 'jpeg', 'png', 'gif', 'jfif'].includes(ext) ? ext : 'jpg';
+        const format = ['jpg', 'jpeg', 'png', 'gif'].includes(ext) ? ext : 'jpg';
         return {
           folder: 'roomzy/hostels',
           format: format

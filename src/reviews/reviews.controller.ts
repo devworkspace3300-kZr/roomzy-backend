@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Body, Param, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -38,5 +38,23 @@ export class ReviewsController {
   @ApiOperation({ summary: 'Get all reviews for moderation' })
   async getAllReviewsForAdmin() {
     return this.reviewsService.getAllReviewsAdmin();
+  }
+
+  @Patch(':id/approve')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Approve a review (Admin only)' })
+  async approveReview(@Param('id') id: string) {
+    return this.reviewsService.approveReview(id);
+  }
+
+  @Patch(':id/reject')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Reject a review (Admin only)' })
+  async rejectReview(@Param('id') id: string) {
+    return this.reviewsService.rejectReview(id);
   }
 }
