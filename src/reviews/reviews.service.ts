@@ -18,8 +18,8 @@ export class ReviewsService {
     }
 
     const booking = bookings[0];
-    if (booking.status !== 'completed' && booking.status !== 'active_stay') {
-      throw new BadRequestException('You can only review completed stays or active stays');
+    if (booking.status !== 'completed' && booking.status !== 'active_stay' && booking.status !== 'confirmed') {
+      throw new BadRequestException('You can only review confirmed, active, or completed stays');
     }
 
     const {
