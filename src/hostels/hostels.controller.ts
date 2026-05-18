@@ -102,6 +102,14 @@ export class HostelsController {
     return this.hostelsService.findByOwner(user.sub);
   }
 
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({ summary: 'Get all hostels for management (Admin only)' })
+  findAllAdmin() {
+    return this.hostelsService.findAllAdmin();
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a single hostel by ID with rooms (Public)' })
   findOne(@Param('id') id: string) {
@@ -117,14 +125,6 @@ export class HostelsController {
       throw new BadRequestException('Invalid status for verification');
     }
     return this.hostelsService.updateStatus(id, status, rejectedReason);
-  }
-
-  @Get('admin/all')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
-  @ApiOperation({ summary: 'Get all hostels for management (Admin only)' })
-  findAllAdmin() {
-    return this.hostelsService.findAllAdmin();
   }
 
   @Patch('admin/:id')
