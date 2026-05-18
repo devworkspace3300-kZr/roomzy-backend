@@ -58,7 +58,7 @@ export class ReviewsService {
 
   async getHostelReviews(hostelId: string) {
     const reviews = await this.dataSource.query(`
-      SELECT r.*, u."fullName" as student_name, u.avatar as student_avatar
+      SELECT r.*, u.full_name as student_name, u.profile_image_url as student_avatar
       FROM reviews r
       JOIN users u ON u.id = r.student_id
       WHERE r.hostel_id = $1 AND r.status = 'approved'
@@ -69,7 +69,7 @@ export class ReviewsService {
 
   async getAllReviewsAdmin() {
     const reviews = await this.dataSource.query(`
-      SELECT r.*, u."fullName" as student_name, h.name as hostel_name
+      SELECT r.*, u.full_name as student_name, h.name as hostel_name
       FROM reviews r
       JOIN users u ON u.id = r.student_id
       JOIN hostels h ON h.id = r.hostel_id
