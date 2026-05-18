@@ -49,6 +49,43 @@ export class UsersService {
   async remove(id: string): Promise<{ message: string }> {
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) throw new NotFoundException(`User with id "${id}" not found`);
+    
+    const userId = id;
+
+    // 1. Clean up support tickets
+    await this.userRepository.query(`DELETE FROM support_tickets WHERE student_id = $1 OR owner_id = $1`, [userId]).catch(() => {});
+
+    // 2. Clean up messages and conversations
+    await this.userRepository.query(`DELETE FROM messages WHERE sender_id = $1`, [userId]).catch(() => {});
+    await this.userRepository.query(`DELETE FROM conversations WHERE student_id = $1 OR owner_id = $1`, [userId]).catch(() => {});
+
+    // 3. Clean up reviews
+    await this.userRepository.query(`DELETE FROM reviews WHERE student_id = $1`, [userId]).catch(() => {});
+
+    // 4. Clean up payouts
+    await this.userRepository.query(`DELETE FROM payouts WHERE owner_id = $1`, [userId]).catch(() => {});
+
+    // 5. Clean up payments
+    await this.userRepository.query(`DELETE FROM payments WHERE student_id = $1 OR owner_id = $1`, [userId]).catch(() => {});
+
+    // 6. Clean up bookings
+    await this.userRepository.query(`DELETE FROM bookings WHERE student_id = $1 OR owner_id = $1`, [userId]).catch(() => {});
+
+    // 7. Clean up inspections and document reviews
+    await this.userRepository.query(`DELETE FROM inspections WHERE scheduled_by = $1 OR inspector_id = $1`, [userId]).catch(() => {});
+    await this.userRepository.query(`DELETE FROM verification_documents WHERE uploaded_by = $1 OR reviewed_by = $1`, [userId]).catch(() => {});
+
+    // 8. Clean up hostels and rooms belonging to the owner
+    await this.userRepository.query(`
+      DELETE FROM rooms WHERE hostel_id IN (SELECT id FROM hostels WHERE owner_id = $1)
+    `, [userId]).catch(() => {});
+    await this.userRepository.query(`DELETE FROM hostels WHERE owner_id = $1`, [userId]).catch(() => {});
+
+    // 9. Clean up profiles and verifications
+    await this.userRepository.query(`DELETE FROM owner_verifications WHERE owner_id = $1`, [userId]).catch(() => {});
+    await this.userRepository.query(`DELETE FROM owner_profiles WHERE user_id = $1`, [userId]).catch(() => {});
+    await this.userRepository.query(`DELETE FROM student_profiles WHERE user_id = $1`, [userId]).catch(() => {});
+
     await this.userRepository.remove(user);
     return { message: `User "${user.fullName}" has been deleted successfully` };
   }
