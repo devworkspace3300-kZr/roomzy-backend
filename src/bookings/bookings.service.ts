@@ -170,12 +170,23 @@ export class BookingsService implements OnModuleInit {
     return this.bookingRepository.save(booking);
   }
 
-  async findMyBookings(studentId: string): Promise<Booking[]> {
-    return this.bookingRepository.find({
+  async findMyBookings(studentId: string): Promise<any[]> {
+    const bookings = await this.bookingRepository.find({
       where: { studentId },
       relations: ['hostel', 'room', 'hostel.images'],
       order: { createdAt: 'DESC' }
     });
+
+    const reviews = await this.bookingRepository.query(`
+      SELECT booking_id FROM reviews WHERE student_id = $1
+    `, [studentId]);
+
+    const reviewedBookingIds = new Set(reviews.map((r: any) => r.booking_id));
+
+    return bookings.map(b => ({
+      ...b,
+      hasReview: reviewedBookingIds.has(b.id)
+    }));
   }
 
   async findOwnerBookings(ownerId: string): Promise<Booking[]> {
