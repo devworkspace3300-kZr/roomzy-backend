@@ -116,12 +116,12 @@ export class BookingsService implements OnModuleInit {
       if (room.availableBeds <= 0) {
         throw new BadRequestException('All beds in this room are occupied.');
       }
-      room.availableBeds -= 1;
+      room.availableBeds = Math.max(0, room.availableBeds - 1);
       if (room.availableBeds <= 0) {
         room.availabilityStatus = RoomAvailabilityStatus.FULL;
       }
     } else {
-      room.availableBeds += 1;
+      room.availableBeds = Math.min(room.totalBeds, room.availableBeds + 1);
       room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
     }
     await this.roomRepository.save(room);
@@ -393,7 +393,17 @@ export class BookingsService implements OnModuleInit {
         status: PaymentStatus.PAID,
         paidAt: new Date(),
       });
-      await this.paymentRepository.save(newPayment);
+      const savedPayment = await this.paymentRepository.save(newPayment);
+
+      // Store in payouts ledger
+      await this.bookingRepository.query(`
+        INSERT INTO payouts (payment_id, owner_id, amount_pkr, status)
+        VALUES ($1, $2, $3, 'queued')
+        ON CONFLICT (payment_id) DO UPDATE SET amount_pkr = EXCLUDED.amount_pkr
+      `, [savedPayment.id, booking.ownerId, payoutPkr]).catch(e => {
+        this.logger.error(`Failed to record payout ledger: ${e.message}`);
+      });
+
     } else if (existingPayment.status !== PaymentStatus.PAID) {
       const commSettings = await this.getCommissionSettings();
       const grossPkr = booking.totalFirstMonth || booking.monthlyPrice || 0;
@@ -418,6 +428,15 @@ export class BookingsService implements OnModuleInit {
         existingPayment.paymentReference = `PHYSICAL-${booking.id.substring(0, 8).toUpperCase()}`;
       }
       await this.paymentRepository.save(existingPayment);
+
+      // Store in payouts ledger
+      await this.bookingRepository.query(`
+        INSERT INTO payouts (payment_id, owner_id, amount_pkr, status)
+        VALUES ($1, $2, $3, 'queued')
+        ON CONFLICT (payment_id) DO UPDATE SET amount_pkr = EXCLUDED.amount_pkr
+      `, [existingPayment.id, booking.ownerId, payoutPkr]).catch(e => {
+        this.logger.error(`Failed to record payout ledger: ${e.message}`);
+      });
     }
 
     // Auto-cancel other PENDING requests if the room is now full
@@ -478,45 +497,40 @@ export class BookingsService implements OnModuleInit {
     const oldStatus = booking.status;
     await this.handleBedAllocation(booking.roomId, oldStatus, BookingStatus.CANCELLED);
 
-    await this.bookingRepository.manager.transaction(async em => {
-      // Defer constraints validation in Postgres if possible
-      await em.query('SET CONSTRAINTS ALL DEFERRED').catch(() => {});
+    const cleanupQueries = [
+        { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id = $1)`, t: 'payouts' },
+        { q: `DELETE FROM refunds WHERE booking_id = $1`, t: 'refunds' },
+        { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
+        { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
+        { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
+        { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
+        { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
+        { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
+        { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
+        { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },
+        { q: `DELETE FROM conversations WHERE booking_id = $1`, t: 'conversations' },
+        { q: `UPDATE conversations SET booking_id = NULL WHERE booking_id = $1`, t: 'conversations set null' },
+        { q: `DELETE FROM email_logs WHERE reference_id = $1`, t: 'email_logs' },
+        { q: `DELETE FROM audit_logs WHERE entity_id = $1`, t: 'audit_logs' },
+        { q: `DELETE FROM notifications WHERE reference_id = $1`, t: 'notifications' },
+        { q: `DELETE FROM admin_notes WHERE entity_id = $1`, t: 'admin_notes' }
+    ];
 
-      const cleanupQueries = [
-          { q: `DELETE FROM payouts WHERE payment_id IN (SELECT id FROM payments WHERE booking_id = $1)`, t: 'payouts' },
-          { q: `DELETE FROM refunds WHERE booking_id = $1`, t: 'refunds' },
-          { q: `DELETE FROM payment_gateway_logs WHERE booking_id = $1`, t: 'payment_gateway_logs' },
-          { q: `UPDATE payment_gateway_logs SET booking_id = NULL WHERE booking_id = $1`, t: 'payment_gateway_logs set null' },
-          { q: `DELETE FROM payments WHERE booking_id = $1`, t: 'payments' },
-          { q: `DELETE FROM reviews WHERE booking_id = $1`, t: 'reviews' },
-          { q: `DELETE FROM active_stays WHERE booking_id = $1`, t: 'active_stays' },
-          { q: `DELETE FROM complaints WHERE booking_id = $1`, t: 'complaints' },
-          { q: `UPDATE complaints SET booking_id = NULL WHERE booking_id = $1`, t: 'complaints set null' },
-          { q: `DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE booking_id = $1)`, t: 'messages' },
-          { q: `DELETE FROM conversations WHERE booking_id = $1`, t: 'conversations' },
-          { q: `UPDATE conversations SET booking_id = NULL WHERE booking_id = $1`, t: 'conversations set null' },
-          { q: `DELETE FROM email_logs WHERE reference_id = $1`, t: 'email_logs' },
-          { q: `DELETE FROM audit_logs WHERE entity_id = $1`, t: 'audit_logs' },
-          { q: `DELETE FROM notifications WHERE reference_id = $1`, t: 'notifications' },
-          { q: `DELETE FROM admin_notes WHERE entity_id = $1`, t: 'admin_notes' }
-      ];
-
-      for (const query of cleanupQueries) {
-          try {
-              await em.query(query.q, [id]);
-          } catch (err) {
-              this.logger.warn(`Cleanup skipped for ${query.t}: ${err.message}`);
-          }
-      }
-      
-      try {
-          await em.query(`DELETE FROM bookings WHERE id = $1`, [id]);
-          this.logger.log(`Successfully deleted booking ${id} and all its dependencies.`);
-      } catch (err) {
-          this.logger.error(`CRITICAL: FINAL DELETE FAILED for booking ${id}: ${err.message}`);
-          throw err;
-      }
-    });
+    for (const query of cleanupQueries) {
+        try {
+            await this.bookingRepository.query(query.q, [id]);
+        } catch (err) {
+            this.logger.warn(`Cleanup skipped for ${query.t}: ${err.message}`);
+        }
+    }
+    
+    try {
+        await this.bookingRepository.query(`DELETE FROM bookings WHERE id = $1`, [id]);
+        this.logger.log(`Successfully deleted booking ${id} and all its dependencies.`);
+    } catch (err) {
+        this.logger.error(`CRITICAL: FINAL DELETE FAILED for booking ${id}: ${err.message}`);
+        throw err;
+    }
   }
 
   async adminUpdate(id: string, updateDto: any): Promise<Booking> {

@@ -42,7 +42,7 @@ export class BookingsScheduler {
       // Release the room bed
       const room = await this.roomRepository.findOne({ where: { id: booking.roomId } });
       if (room) {
-        room.availableBeds += 1;
+        room.availableBeds = Math.min(room.totalBeds, room.availableBeds + 1);
         room.availabilityStatus = RoomAvailabilityStatus.AVAILABLE;
         await this.roomRepository.save(room);
       }
