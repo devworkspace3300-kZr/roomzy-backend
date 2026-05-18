@@ -64,7 +64,7 @@ export class ReviewsService {
       WHERE r.hostel_id = $1 AND r.status = 'approved'
       ORDER BY r.created_at DESC
     `, [hostelId]);
-    return { success: true, data: reviews };
+    return reviews;
   }
 
   async getAllReviewsAdmin() {
@@ -75,7 +75,7 @@ export class ReviewsService {
       JOIN hostels h ON h.id = r.hostel_id
       ORDER BY r.created_at DESC
     `);
-    return { success: true, data: reviews };
+    return reviews;
   }
 
   async approveReview(id: string) {
